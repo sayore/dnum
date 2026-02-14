@@ -103,6 +103,27 @@ The library is battle-tested against real-world scientific scenarios, including 
 
 ---
 
+## ⚠️ Limitations & Harsh Realities
+
+DNum is a powerhouse for scaling, but it is **not** a magic bullet. Read these before using it in production:
+
+### 1. The "15-Digit Window"
+DNum is **not** an Arbitrary Precision library (like BigInt or Decimal.js). It uses a "moving window" of ~15 significant digits. 
+* **The Reality:** You can add a grain of sand to a mountain and DNum will remember it. But you **cannot** see the individual grains of sand and the entire mountain simultaneously if the mountain is $10^{20}$ times larger than the grain. The middle digits will be lost to floating-point noise.
+
+### 2. Dimensional Sensitivity (The Butterfly Effect)
+In high dimensions ($d > 100$), the side length $s$ becomes extremely sensitive.
+* **The Reality:** A rounding error in the 15th decimal place of $s$ at Dimension 1000 can translate to an absolute error larger than the observable universe. DNum is **logarithmically stable**, but **linearly chaotic** at high scales.
+
+### 3. Not for Cryptography or Precise Finance
+* **The Reality:** Never use DNum for cryptographic keys, security tokens, or financial ledgers that require 100% digit-perfect accuracy across massive scales. Use `BigInt` or specialized accounting libraries for that.
+
+### 4. Performance Overhead
+While fast, DNum is a complex object with a `Map`-based tracer system.
+* **The Reality:** It is significantly slower than native `number` primitives. Don't use it for heavy vertex math or real-time physics engines unless you actually need the infinite scale.
+
+---
+
 ## 💾 Persistence
 
 ```typescript
