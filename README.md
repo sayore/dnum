@@ -84,7 +84,7 @@ const powerLevel = new DNum(12.50, 12);
 console.log(powerLevel.toString(2)); 
 // Output: ₁₂12⁵⁰
 
-const powerLevel = new DNum(12.50, 12);
+const powerLevel = new DNum(150.50, 12);
 console.log(powerLevel.toString(2)); 
 // Output: ₁₄73⁵³ (₁₂150⁵⁰ but normalized to be within 0 - 100)
 ```
