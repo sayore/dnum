@@ -15,3 +15,8 @@ vermoegen.sub(abzug);
 
 console.log("Ergebnis:", vermoegen.toString()); 
 // Erwartet: -₃5⁸⁴ (was -200 entspricht)
+
+const powerLevel = new DNum(12.50, 12);
+console.log(powerLevel.toString(2)); 
+const powerLevel2 = new DNum(150.50, 12);
+console.log(powerLevel2.toString(2)); 
