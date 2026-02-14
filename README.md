@@ -105,6 +105,8 @@ console.log(recovered.d); // 12
 
 ## 📊 API Reference (Quick Look)
 
+Der mitgelieferte `DNumFormatter` schaltet automatisch zwischen verschiedenen Modi um:
+
 | Method | Description |
 | --- | --- |
 | `add(other)` | Adds another DNum (including tracer data). |
