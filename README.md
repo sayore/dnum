@@ -64,8 +64,8 @@ console.log(cookies.toScientific()); // "1.0000e+10000"
 
 Anstatt eine riesige Mantisse zu speichern, repräsentiert DNum Werte als Volumen eines -dimensionalen Hyperwürfels: .
 
-* ** (Seitenlänge):** Gehalten im Bereich  für optimale Präzision.
-* ** (Dimension):** Die Skalierungsebene.
+* *(Seitenlänge):* Gehalten im Bereich  für optimale Präzision.
+* *(Dimension):* Die Skalierungsebene.
 
 ### Der Tracer (Das Gedächtnis für Kleingeld)
 
