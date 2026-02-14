@@ -20,9 +20,9 @@ DNum is a TypeScript library designed to handle values that exceed the limits of
 ## 🚀 Installation
 
 ```bash
-npm install dnum
+npm install @sayore/dnum
 # or
-pnpm add dnum
+pnpm add @sayore/dnum
 ```
 
 ---
