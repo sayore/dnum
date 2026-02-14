@@ -1,0 +1,27 @@
+{
+  "name": "dnum",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "counter": "tsx src/counter.ts",
+    "test1": "tsx src/test1.ts",
+    "test2": "tsx src/test2.ts",
+    "test3": "tsx src/test3.ts",
+    "dev": "vitest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
