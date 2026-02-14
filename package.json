@@ -1,6 +1,6 @@
 {
   "name": "dnum",
-  "version": "0.87",
+  "version": "0.8.7",
   "description": "",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

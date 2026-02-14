@@ -5,3 +5,4 @@ tsconfig.json
 gen.py
 fix_readme.py
 .github/
+dist
