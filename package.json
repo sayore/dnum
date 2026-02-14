@@ -1,10 +1,17 @@
 {
   "name": "@sayore/dnum",
-  "version": "0.8.7",
-  "description": "",
+  "version": "0.8.8",
+  "description": "High-precision dimensional numbers for infinite scales and micro-precision.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sayore/dnum.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sayore/dnum/issues"
+  },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "test": "vitest run",
@@ -16,12 +23,25 @@
     "test4": "tsx src/test4.ts",
     "dev": "vitest"
   },
-  "keywords": [],
-  "author": "",
+  "author": "Amelie Krippner <amykrippner@outlook.de>",
+  "homepage": "https://github.com/sayore/dnum#readme",
+  "keywords": [
+    "math",
+    "precision",
+    "infinite",
+    "dimensional",
+    "idle-game",
+    "big-number",
+    "tracer"
+  ],
   "files": [
     "dist"
   ],
-  "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.2.3",
     "ts-node": "^10.9.2",
