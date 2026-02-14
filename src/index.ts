@@ -13,6 +13,13 @@ class TracerSystem {
     const current = this.buckets.get(dim) || 0;
     const nextValue = current + value;
 
+    // In D1 sammeln wir einfach, bis es groß genug für den Hauptwert ist
+    if (dim === 1) {
+      this.buckets.set(dim, nextValue);
+      // Optional: Automatisch mergen, wenn der Tracer signifikant wird
+      return;
+    }
+
     if (nextValue >= this.THRESHOLD) {
       const promotedS = Math.pow(nextValue, dim / (dim + 1));
       this.buckets.set(dim, 0);
@@ -24,6 +31,17 @@ class TracerSystem {
     } else {
       this.buckets.set(dim, nextValue);
     }
+  }
+
+  // Innerhalb der TracerSystem Klasse
+  isEmpty(): boolean {
+    if (this.buckets.size === 0) return true;
+
+    // Sichergehen, dass nicht nur "leere" Einträge (0) drinstehen
+    for (let val of this.buckets.values()) {
+      if (val !== 0) return false;
+    }
+    return true;
   }
 
   getBuckets() {
@@ -55,7 +73,7 @@ export class DNum {
   }
 
   /** Berechnet den totalen Logarithmus sicher (immer vom Absolutwert) */
-  private get totalLog(): number {
+  public get totalLog(): number {
     return this.d * Math.log10(Math.abs(this.s) || 1e-15);
   }
 
@@ -94,13 +112,39 @@ export class DNum {
   private internalAdd(amountS: number, amountD: number): void {
     if (amountS === 0) return;
 
-    // --- FAST-PATH (Der "Echte-Geld-Modus") ---
-    // Wenn wir in Dimension 1 sind und der neue Betrag auch,
-    // rechnen wir wie ein normaler Taschenrechner. Kein Logarithmus!
+    // --- LINEARER BEREICH (D1) ---
     if (this.d === 1 && amountD === 1) {
+      const currentLog = Math.log10(Math.abs(this.s) || 1e-20);
+      const incomingLog = Math.log10(Math.abs(amountS) || 1e-20);
+
+      // Wenn der Unterschied > 15 Dekaden ist (Präzisionsverlust droht)
+      if (currentLog - incomingLog > 15) {
+        // Wir speichern es einfach LINEAR im Tracer-Bucket 1
+        this.tracers.deposit(amountS, 1);
+        return;
+      }
+
       this.s += amountS;
-      // Erst wenn wir die "Sicherheitsgrenze" von 1 Billiarde sprengen,
-      // lassen wir das System in höhere Dimensionen normalisieren.
+      if (Math.abs(this.s) > 1e15) this.normalize();
+      return;
+    }
+
+    // --- DER "UNIVERSELLE" FAST-PATH ---
+    // Wir behandeln ALLES, was linear darstellbar ist, in Dimension 1.
+    // Auch Nanometer (1e-9) sind in D1 sicher, solange sie im Tracer liegen.
+    if (this.d === 1 && amountD === 1) {
+      const logV1 = Math.log10(Math.abs(this.s) || 1e-20);
+      const logV2 = Math.log10(Math.abs(amountS) || 1e-20);
+
+      // Wenn der Unterschied zwischen Hauptwert (300 Mrd) und 
+      // Korrektur (0.000000001) größer als 15 Dekaden ist:
+      if (logV1 - logV2 > 15) {
+        this.tracers.deposit(amountS, 1); // Ab in den Tracer-Speicher
+        return;
+      }
+
+      // Normal addieren, wenn sie nah beieinander liegen
+      this.s += amountS;
       if (Math.abs(this.s) > 1e15) this.normalize();
       return;
     }
@@ -187,6 +231,41 @@ export class DNum {
 
     return this;
   }
+  /**
+    * Berechnet die Quadratwurzel (sqrt).
+   */
+  sqrt(): DNum {
+    if (this.s < 0) throw new Error("DNum: Square root of negative number is not supported.");
+    if (this.s === 0) return new DNum(0, 1);
+
+    // Der Fast-Path für einfaches Geld/kleine Distanzen
+    if (this.d === 1 && this.s < 1e15) {
+      return DNum.fromAny(Math.sqrt(this.s));
+    }
+
+    // Die Log-Logik: log(sqrt(x)) = 0.5 * log(x)
+    const newLog = 0.5 * this.totalLog;
+    return DNum.fromLog(newLog);
+  }
+
+  /**
+   * Erhebt den DNum in die Potenz n.
+   */
+  pow(n: number): DNum {
+    if (this.s === 0) return new DNum(0, 1);
+    if (n === 0) return DNum.fromAny(1);
+    if (n === 1) return DNum.deserialize(this.serialize());
+
+    // Die Log-Logik: log(x^n) = n * log(x)
+    const newLog = n * this.totalLog;
+
+    // Vorzeichen-Logik (bei geraden Potenzen wird alles positiv)
+    const resultSign = (this.s < 0 && n % 2 !== 0) ? -1 : 1;
+
+    const res = DNum.fromLog(newLog);
+    res.s *= resultSign;
+    return res;
+  }
 
   /**
    * Berechnet den absoluten Abstand zwischen zwei DNums als DNum.
@@ -239,6 +318,18 @@ export class DNum {
   }
 
   /**
+   * Prüft, ob die Zahl absolut Null ist.
+   * Berücksichtigt den Hauptwert UND alle versteckten Tracer-Buckets.
+   */
+  isZero(): boolean {
+    // 1. Der Hauptwert muss 0 sein
+    if (this.s !== 0) return false;
+
+    // 2. Die Tracer müssen leer sein
+    return this.tracers.isEmpty();
+  }
+
+  /**
    * Erweiterte toString Methode mit variabler Präzision.
    */
   toString(precision: number = 2): string {
@@ -279,19 +370,28 @@ export class DNum {
   }
 
   /**
-   * ZWINGT alle Tracer-Werte in den Hauptwert.
-   * Nutzt die Log-Sum-Formel, auch wenn Präzision verloren geht.
-   */
-  collapse(): this {
+ * Zwingt alle Tracer-Inhalte in den Hauptwert, 
+ * auch wenn der Präzisions-Abstand eigentlich zu groß ist.
+ */
+  collapse(): void {
     const buckets = this.tracers.getBuckets();
-    buckets.forEach((val, dim) => {
-      if (val !== 0) {
-        // Wir nutzen die interne Add-Logik ohne den 15-Stellen-Guard
-        this.forceAdd(val, dim);
+    const sortedDims = Array.from(buckets.keys()).sort((a, b) => a - b);
+
+    for (const dim of sortedDims) {
+      const val = buckets.get(dim);
+      if (val && val !== 0) {
+        // Wir umgehen hier die internalAdd Logik, 
+        // um den Loop zu verhindern
+        if (this.d === 1 && dim === 1) {
+          this.s += val;
+        } else {
+          // Für andere Dimensionen nutzen wir die normale Logik
+          this.internalAdd(val, dim);
+        }
+        buckets.delete(dim);
       }
-    });
-    this.tracers.clear(); // Alle Tracer nach der Verschmelzung leeren
-    return this;
+    }
+    this.normalize();
   }
 
   static fromStyledString(styled: string): DNum {
@@ -349,6 +449,38 @@ export class DNum {
     const mantissa = Math.pow(10, logV - exponent);
 
     return `${mantissa.toFixed(4)}e+${exponent}`;
+  }
+
+  /**
+ * Erzeugt einen String mit maximaler Präzision, indem Hauptwert und 
+ * Tracer-Buckets getrennt verarbeitet werden. Verhindert 64-Bit Rundungsfehler.
+ */
+  toPreciseString(decimalPlaces: number = 10): string {
+    if (this.d !== 1) return this.toFullString(decimalPlaces);
+
+    const absS = Math.abs(this.s);
+    // 1. Ganzzahl-Teil sicher als BigInt extrahieren
+    let integerPart = BigInt(Math.floor(absS));
+
+    // 2. Alle fraktionalen Reste sammeln
+    // Wir nehmen den Rest von s UND alle Werte aus dem Tracer
+    let fractionalAccumulator = absS % 1;
+
+    const buckets = this.tracers.getBuckets();
+    for (const val of buckets.values()) {
+      fractionalAccumulator += val;
+    }
+
+    // 3. Überlauf vom Akkumulator in die Ganzzahl prüfen (falls Tracer > 1)
+    const carry = Math.floor(fractionalAccumulator);
+    integerPart += BigInt(carry);
+    const finalFraction = Math.abs(fractionalAccumulator - carry);
+
+    // 4. String-Zusammenbau ohne wissenschaftliche Notation
+    const sign = this.s < 0 ? "-" : "";
+    const fractionStr = finalFraction.toFixed(decimalPlaces).split(".")[1];
+
+    return `${sign}${integerPart.toString()}.${fractionStr}`;
   }
 
   /**
@@ -483,4 +615,46 @@ export class DNum {
     }
     return instance;
   }
+}
+
+class DNumFormatter {
+    // Suffixe für den benannten Bereich
+    private static namedSuffixes = ["", "k", "Mio", "Mrd", "Bio", "Brd", "Trill", "Trard"];
+    
+    // Alphabetische Suffixe für den Bereich danach (aa, ab, ac...)
+    private static getLetterSuffix(logV: number): string {
+        const index = Math.floor((logV - 24) / 3);
+        if (index < 0) return "";
+        
+        const firstLetter = String.fromCharCode(97 + Math.floor(index / 26));
+        const secondLetter = String.fromCharCode(97 + (index % 26));
+        return firstLetter + secondLetter;
+    }
+
+    public static format(num: DNum, precision: number = 2): string {
+        const logV = num.totalLog;
+
+        // 1. Götter-Modus (Dimensionen)
+        // Wenn die Zahl so groß ist, dass Suffixe keinen Sinn mehr ergeben
+        if (num.d > 10 || logV > 3000) {
+            return `${num.s.toFixed(precision)} [D${num.d}]`;
+        }
+
+        // 2. Alphabetischer Modus (aa, ab, ac...)
+        if (logV >= 24) {
+            const displayS = Math.pow(10, logV % 3);
+            return `${displayS.toFixed(precision)} ${this.getLetterSuffix(logV)}`;
+        }
+
+        // 3. Benannter Modus
+        if (logV >= 3) {
+            const suffixIndex = Math.floor(logV / 3);
+            const displayS = Math.pow(10, logV % 3);
+            const suffix = this.namedSuffixes[suffixIndex] || "e" + logV;
+            return `${displayS.toFixed(precision)} ${suffix}`;
+        }
+
+        // 4. Menschlicher Modus (mit Tracer-Präzision!)
+        return num.toPreciseString(precision);
+    }
 }

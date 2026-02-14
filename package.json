@@ -12,6 +12,7 @@
     "test1": "tsx src/test1.ts",
     "test2": "tsx src/test2.ts",
     "test3": "tsx src/test3.ts",
+    "test4": "tsx src/test4.ts",
     "dev": "vitest"
   },
   "keywords": [],
