@@ -1,22 +1,30 @@
 /**
- * Verwaltet Mikro-Beträge in verschiedenen Dimensionen, 
- * um Präzisionsverluste bei großen Skalenunterschieden zu verhindern.
+ * Manages micro-amounts in different dimensions to prevent precision loss 
+ * when dealing with large differences in scale.
  */
 class TracerSystem {
   private buckets: Map<number, number> = new Map();
   private readonly THRESHOLD = 100;
 
+  /**
+   * @param onOverflow Callback triggered when a bucket exceeds the threshold and should be promoted to the next dimension.
+   */
   constructor(private onOverflow: (value: number, dim: number) => void) { }
 
+  /**
+   * Deposits a value into a specific dimension bucket.
+   * @param value The amount to deposit.
+   * @param dim The dimension of the amount.
+   */
   deposit(value: number, dim: number): void {
     if (value === 0) return;
     const current = this.buckets.get(dim) || 0;
     const nextValue = current + value;
 
-    // In D1 sammeln wir einfach, bis es groß genug für den Hauptwert ist
+    // In D1, we simply accumulate until it's large enough for the main value.
     if (dim === 1) {
       this.buckets.set(dim, nextValue);
-      // Optional: Automatisch mergen, wenn der Tracer signifikant wird
+      // Optional: Automatically merge if the tracer becomes significant.
       return;
     }
 
@@ -33,21 +41,28 @@ class TracerSystem {
     }
   }
 
-  // Innerhalb der TracerSystem Klasse
+  /**
+   * Checks if all buckets are empty (or contain only 0).
+   */
   isEmpty(): boolean {
     if (this.buckets.size === 0) return true;
 
-    // Sichergehen, dass nicht nur "leere" Einträge (0) drinstehen
     for (let val of this.buckets.values()) {
       if (val !== 0) return false;
     }
     return true;
   }
 
+  /**
+   * Returns a copy of the current buckets.
+   */
   getBuckets() {
     return new Map(this.buckets);
   }
 
+  /**
+   * Clears all tracer buckets.
+   */
   clear(): void {
     this.buckets.clear();
   }
@@ -55,16 +70,22 @@ class TracerSystem {
 
 /**
  * Dimensional Number (DNum)
- * Repräsentiert einen Wert als Volumen eines n-dimensionalen Hyperwürfels: V = s^d
+ * Represents a value as the volume of an n-dimensional hypercube: V = s^d
+ * This allows for representing extremely large numbers while maintaining precision 
+ * for tiny changes via a "Tracer" system.
  */
 export class DNum {
-  public s: number; // Seitenlänge
-  public d: number; // Dimension
+  public s: number; // Side length (mantissa-like)
+  public d: number; // Dimension (exponent-like)
   private tracers: TracerSystem;
 
   private readonly MIN_S = 1.1;
   private readonly MAX_S = 100;
 
+  /**
+   * @param s The side length of the hypercube.
+   * @param d The dimension of the hypercube. Defaults to 1 (linear).
+   */
   constructor(s: number, d: number = 1) {
     this.s = s;
     this.d = d;
@@ -72,13 +93,18 @@ export class DNum {
     this.normalize();
   }
 
-  /** Berechnet den totalen Logarithmus sicher (immer vom Absolutwert) */
+  /** 
+   * Safely calculates the total base-10 logarithm of the value.
+   * Uses the absolute value to handle negative numbers.
+   */
   public get totalLog(): number {
     return this.d * Math.log10(Math.abs(this.s) || 1e-15);
   }
 
-  /** Hält s im lesbaren Bereich [1.1, 100] */
-  /** Hält d als Ganzzahl und lässt s zwischen einem Startwert und 100 wandern */
+  /** 
+   * Normalizes the number to keep 's' within a readable range [1.1, 100] 
+   * while keeping 'd' as an integer.
+   */
   private normalize(): void {
     const absS = Math.abs(this.s);
     if (absS === 0) { this.s = 0; this.d = 1; return; }
@@ -86,13 +112,13 @@ export class DNum {
     const sign = this.s >= 0 ? 1 : -1;
     let logV = this.d * Math.log10(absS);
 
-    // NEU: In Dimension 1 bleiben wir so lange wie möglich (bis 1e15)
-    // Erst darüber hinaus springen wir in das 1.1 - 100 Fenster
+    // In Dimension 1, we stay as long as possible (up to 1e15)
+    // beyond that, we jump into the 1.1 - 100 window of higher dimensions.
     if (this.d === 1 && absS < 1e15 && absS > 1e-10) {
-      return; // Alles okay, bleib linear!
+      return; // All good, stay linear!
     }
 
-    // Wenn wir in hohen Dimensionen sind oder das Limit sprengen:
+    // If we are in high dimensions or exceed the limit:
     while (Math.abs(this.s) >= (this.d === 1 ? 1e15 : 100)) {
       this.d += 1;
       this.s = sign * Math.pow(10, logV / this.d);
@@ -105,21 +131,20 @@ export class DNum {
   }
 
   /**
-   * Die Kern-Logik: Erkennt, ob ein Wert direkt addiert werden kann 
-   * oder in die Tracer-Verschrottung muss.
+   * Core addition logic. Determines if a value can be added directly 
+   * or if it needs to be stored in the Tracer system to avoid precision loss.
    */
-  /** Die ultimative Additions-Logik mit Fast-Path für Banken-Präzision */
   private internalAdd(amountS: number, amountD: number): void {
     if (amountS === 0) return;
 
-    // --- LINEARER BEREICH (D1) ---
+    // --- LINEAR RANGE (D1) ---
     if (this.d === 1 && amountD === 1) {
       const currentLog = Math.log10(Math.abs(this.s) || 1e-20);
       const incomingLog = Math.log10(Math.abs(amountS) || 1e-20);
 
-      // Wenn der Unterschied > 15 Dekaden ist (Präzisionsverlust droht)
+      // If the difference is > 15 decades (precision loss imminent)
       if (currentLog - incomingLog > 15) {
-        // Wir speichern es einfach LINEAR im Tracer-Bucket 1
+        // We store it LINEARLY in Tracer-Bucket 1
         this.tracers.deposit(amountS, 1);
         return;
       }
@@ -129,34 +154,31 @@ export class DNum {
       return;
     }
 
-    // --- DER "UNIVERSELLE" FAST-PATH ---
-    // Wir behandeln ALLES, was linear darstellbar ist, in Dimension 1.
-    // Auch Nanometer (1e-9) sind in D1 sicher, solange sie im Tracer liegen.
+    // --- UNIVERSAL FAST-PATH ---
+    // Handle everything that can be represented linearly in D1.
     if (this.d === 1 && amountD === 1) {
       const logV1 = Math.log10(Math.abs(this.s) || 1e-20);
       const logV2 = Math.log10(Math.abs(amountS) || 1e-20);
 
-      // Wenn der Unterschied zwischen Hauptwert (300 Mrd) und 
-      // Korrektur (0.000000001) größer als 15 Dekaden ist:
+      // If the gap between main value and correction is > 15 decades:
       if (logV1 - logV2 > 15) {
-        this.tracers.deposit(amountS, 1); // Ab in den Tracer-Speicher
+        this.tracers.deposit(amountS, 1); // Store in Tracer
         return;
       }
 
-      // Normal addieren, wenn sie nah beieinander liegen
       this.s += amountS;
       if (Math.abs(this.s) > 1e15) this.normalize();
       return;
     }
 
-    // --- DIMENSIONALER PFAD (Der "Galaxie-Modus") ---
+    // --- DIMENSIONAL PATH ("Galaxy Mode") ---
     const signA = this.s >= 0 ? 1 : -1;
     const signB = amountS >= 0 ? 1 : -1;
 
     const logV1 = this.totalLog;
     const logV2 = amountD * Math.log10(Math.abs(amountS) || 1e-15);
 
-    // Wenn der Unterschied zu gewaltig ist, ab in den Tracer
+    // If the difference is too massive, move to Tracer
     if (logV1 - logV2 > 15) {
       this.tracers.deposit(amountS, amountD);
       return;
@@ -164,7 +186,7 @@ export class DNum {
 
     const maxLog = Math.max(logV1, logV2);
 
-    // Berechnung im linearen Raum relativ zum Maximum
+    // Calculation in linear space relative to the maximum
     let resLinear = (signA * Math.pow(10, logV1 - maxLog)) +
       (signB * Math.pow(10, logV2 - maxLog));
 
@@ -180,12 +202,16 @@ export class DNum {
     this.normalize();
   }
 
-  // --- Arithmetik ---
+  // --- Arithmetic ---
 
+  /**
+   * Adds another DNum to this instance.
+   * @returns This instance (for chaining).
+   */
   add(other: DNum): DNum {
-    // 1. Hauptwert addieren
+    // 1. Add the main value
     this.internalAdd(other.s, other.d);
-    // 2. Alle Buckets des anderen Objekts übernehmen
+    // 2. Transfer all buckets from the other object
     other.tracers.getBuckets().forEach((val, dim) => {
       this.internalAdd(val, dim);
     });
@@ -193,19 +219,19 @@ export class DNum {
   }
 
   /**
-   * Multiplikation skaliert auch die Mikro-Werte (Buckets)
+   * Multiplies this instance by another DNum.
+   * Also scales micro-values (Tracer buckets).
+   * @returns This instance (for chaining).
    */
   mul(other: DNum): DNum {
     const factorLog = other.totalLog;
 
-    // Buckets skalieren: Ein Bucket in Dim 1 wird durch Mul mit DNum(100, 1) 
-    // zu einem deutlich größeren Wert.
     const currentBuckets = this.tracers.getBuckets();
     this.tracers.clear();
     currentBuckets.forEach((val, dim) => {
       const bucketLog = dim * Math.log10(Math.abs(val));
       const newLog = bucketLog + factorLog;
-      // Wir "re-deponieren" den skalierten Bucket
+      // Re-deposit the scaled bucket
       const newS = Math.pow(10, newLog / dim);
       this.internalAdd(newS, dim);
     });
@@ -217,49 +243,51 @@ export class DNum {
   }
 
   /**
-   * Subtrahiert einen anderen DNum.
-   * Berücksichtigt sowohl den Hauptwert als auch alle Tracer-Buckets des Gegners.
+   * Subtracts another DNum from this instance.
+   * Accounts for both the main value and all Tracer buckets of the subtrahend.
+   * @returns This instance (for chaining).
    */
   sub(other: DNum): DNum {
-    // 1. Den Hauptwert von 'other' mit umgekehrtem Vorzeichen addieren
+    // 1. Add the main value with reversed sign
     this.internalAdd(-other.s, other.d);
 
-    // 2. Die Buckets von 'other' ebenfalls mit umgekehrtem Vorzeichen übernehmen
+    // 2. Transfer buckets with reversed sign
     other.tracers.getBuckets().forEach((val, dim) => {
       this.internalAdd(-val, dim);
     });
 
     return this;
   }
+
   /**
-    * Berechnet die Quadratwurzel (sqrt).
+   * Calculates the square root of the value.
    */
   sqrt(): DNum {
     if (this.s < 0) throw new Error("DNum: Square root of negative number is not supported.");
     if (this.s === 0) return new DNum(0, 1);
 
-    // Der Fast-Path für einfaches Geld/kleine Distanzen
+    // Fast-path for simple linear values
     if (this.d === 1 && this.s < 1e15) {
       return DNum.fromAny(Math.sqrt(this.s));
     }
 
-    // Die Log-Logik: log(sqrt(x)) = 0.5 * log(x)
+    // Log logic: log(sqrt(x)) = 0.5 * log(x)
     const newLog = 0.5 * this.totalLog;
     return DNum.fromLog(newLog);
   }
 
   /**
-   * Erhebt den DNum in die Potenz n.
+   * Raises this instance to the power of 'n'.
    */
   pow(n: number): DNum {
     if (this.s === 0) return new DNum(0, 1);
     if (n === 0) return DNum.fromAny(1);
     if (n === 1) return DNum.deserialize(this.serialize());
 
-    // Die Log-Logik: log(x^n) = n * log(x)
+    // Log logic: log(x^n) = n * log(x)
     const newLog = n * this.totalLog;
 
-    // Vorzeichen-Logik (bei geraden Potenzen wird alles positiv)
+    // Sign logic: even powers result in positive values
     const resultSign = (this.s < 0 && n % 2 !== 0) ? -1 : 1;
 
     const res = DNum.fromLog(newLog);
@@ -268,38 +296,44 @@ export class DNum {
   }
 
   /**
-   * Berechnet den absoluten Abstand zwischen zwei DNums als DNum.
-   * (Entspricht mathematisch |a - b|)
+   * Calculates the absolute distance between two DNums as a new DNum.
+   * Mathematically equivalent to |a - b|.
    */
   static getDistance(a: DNum, b: DNum): DNum {
     const logA = a.totalLog;
     const logB = b.totalLog;
 
-    // Wenn beide identisch sind oder der Unterschied unendlich klein
+    // If identical or the difference is infinitely small
     if (Math.abs(logA - logB) < 1e-15) return new DNum(0, 1);
 
     const maxLog = Math.max(logA, logB);
     const minLog = Math.min(logA, logB);
 
-    // Wenn der Abstand so groß ist, dass die kleinere Zahl keine Rolle spielt
+    // If the gap is so large that the smaller number is irrelevant
     if (maxLog - minLog > 15) return DNum.fromLog(maxLog);
 
-    // Präzise Differenz im Log-Raum
+    // Precise difference in log-space
     const diffLinear = 1 - Math.pow(10, minLog - maxLog);
     const resLog = maxLog + Math.log10(diffLinear);
 
     return DNum.fromLog(resLog);
   }
 
-  /** Erzeugt ein DNum direkt aus einem totalLog-Wert */
+  /** 
+   * Factory method: Creates a DNum directly from a totalLog value.
+   */
   static fromLog(logV: number): DNum {
     if (logV <= -15) return new DNum(0, 1);
-    // Wir wählen eine passende Dimension für die Darstellung
+    // Choose an appropriate dimension for representation
     const targetD = Math.max(1, Math.ceil(logV / 2));
     const s = Math.pow(10, logV / targetD);
     return new DNum(s, targetD);
   }
 
+  /**
+   * Divides this instance by another DNum.
+   * @returns This instance (for chaining).
+   */
   div(other: DNum): DNum {
     const divisorLog = other.totalLog;
     const currentBuckets = this.tracers.getBuckets();
@@ -318,19 +352,17 @@ export class DNum {
   }
 
   /**
-   * Prüft, ob die Zahl absolut Null ist.
-   * Berücksichtigt den Hauptwert UND alle versteckten Tracer-Buckets.
+   * Checks if the number is absolutely zero.
+   * Accounts for both the main value AND all hidden Tracer buckets.
    */
   isZero(): boolean {
-    // 1. Der Hauptwert muss 0 sein
     if (this.s !== 0) return false;
-
-    // 2. Die Tracer müssen leer sein
     return this.tracers.isEmpty();
   }
 
   /**
-   * Erweiterte toString Methode mit variabler Präzision.
+   * Enhanced toString method with variable precision.
+   * Uses subscript for dimension and superscript for decimal fraction.
    */
   toString(precision: number = 2): string {
     const isNegative = this.s < 0;
@@ -351,28 +383,29 @@ export class DNum {
   }
 
   /**
-   * Erstellt einen Bericht über die Stabilität im Vergleich zu einem Referenzwert.
+   * Generates a stability report compared to a reference value.
+   * Useful for auditing precision and drift.
    */
   getStabilityReport(reference: DNum): string {
     const drift = DNum.getDistance(this, reference);
 
-    // Der "Sicherheitsabstand" in Dekaden (Größenordnungen)
-    // Je höher dieser Wert, desto weniger spürbar ist der Fehler.
+    // The "safety margin" in decades (orders of magnitude).
+    // The higher the value, the less noticeable the error.
     const gap = this.totalLog - drift.totalLog;
 
-    let quality = "UNSICHER";
-    if (gap > 15) quality = "PERFEKT (FP-Limit)";
-    else if (gap > 12) quality = "EXZELLENT";
-    else if (gap > 8) quality = "STABIL";
-    else if (gap > 0) quality = "DRIVING";
+    let quality = "UNSAFE";
+    if (gap > 15) quality = "PERFECT (FP-Limit)";
+    else if (gap > 12) quality = "EXCELLENT";
+    else if (gap > 8) quality = "STABLE";
+    else if (gap > 0) quality = "DRIFTING";
 
-    return `Wert: ${this.toString()} | Drift: ${drift.toString()} | Gap: ${gap.toFixed(2)} (${quality})`;
+    return `Value: ${this.toString()} | Drift: ${drift.toString()} | Gap: ${gap.toFixed(2)} (${quality})`;
   }
 
   /**
- * Zwingt alle Tracer-Inhalte in den Hauptwert, 
- * auch wenn der Präzisions-Abstand eigentlich zu groß ist.
- */
+   * Forces all Tracer contents into the main value, 
+   * even if the precision gap is normally too large.
+   */
   collapse(): void {
     const buckets = this.tracers.getBuckets();
     const sortedDims = Array.from(buckets.keys()).sort((a, b) => a - b);
@@ -380,12 +413,11 @@ export class DNum {
     for (const dim of sortedDims) {
       const val = buckets.get(dim);
       if (val && val !== 0) {
-        // Wir umgehen hier die internalAdd Logik, 
-        // um den Loop zu verhindern
+        // Bypass internalAdd logic to prevent recursive loops
         if (this.d === 1 && dim === 1) {
           this.s += val;
         } else {
-          // Für andere Dimensionen nutzen wir die normale Logik
+          // Use normal logic for other dimensions
           this.internalAdd(val, dim);
         }
         buckets.delete(dim);
@@ -394,6 +426,9 @@ export class DNum {
     this.normalize();
   }
 
+  /**
+   * Parses a DNum from its styled string representation (using sub/superscripts).
+   */
   static fromStyledString(styled: string): DNum {
     const subMap: any = { "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9" };
     const supMap: any = { "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9" };
@@ -401,7 +436,6 @@ export class DNum {
     let dimStr = "";
     let mainStr = "";
     let fracStr = "";
-    let mode = 'dim'; // dim, main, frac
 
     for (const char of styled) {
       if (subMap[char] !== undefined) {
@@ -419,10 +453,7 @@ export class DNum {
   }
 
   /**
-   * Versucht die Zahl in die derzeitige Dimension zu rechnen, auch wenn das Präzisionsverlust bedeutet.
-   * @param amountS 
-   * @param amountD 
-   * @returns 
+   * Attempts to add a value into the current dimension even if it causes precision loss.
    */
   private forceAdd(amountS: number, amountD: number): void {
     if (amountS === 0) return;
@@ -438,8 +469,8 @@ export class DNum {
   }
 
   /**
-   * Gibt die Zahl in klassischer wissenschaftlicher Notation zurück.
-   * Beispiel: "2.77e+25"
+   * Returns the value in classic scientific notation.
+   * Example: "2.77e+25"
    */
   toScientific(): string {
     const logV = this.totalLog;
@@ -452,18 +483,17 @@ export class DNum {
   }
 
   /**
- * Erzeugt einen String mit maximaler Präzision, indem Hauptwert und 
- * Tracer-Buckets getrennt verarbeitet werden. Verhindert 64-Bit Rundungsfehler.
- */
+   * Generates a string with maximum precision by processing main value 
+   * and Tracer buckets separately. Prevents 64-bit rounding errors.
+   */
   toPreciseString(decimalPlaces: number = 10): string {
     if (this.d !== 1) return this.toFullString(decimalPlaces);
 
     const absS = Math.abs(this.s);
-    // 1. Ganzzahl-Teil sicher als BigInt extrahieren
+    // 1. Extract integer part safely as BigInt
     let integerPart = BigInt(Math.floor(absS));
 
-    // 2. Alle fraktionalen Reste sammeln
-    // Wir nehmen den Rest von s UND alle Werte aus dem Tracer
+    // 2. Accumulate all fractional remainders
     let fractionalAccumulator = absS % 1;
 
     const buckets = this.tracers.getBuckets();
@@ -471,12 +501,12 @@ export class DNum {
       fractionalAccumulator += val;
     }
 
-    // 3. Überlauf vom Akkumulator in die Ganzzahl prüfen (falls Tracer > 1)
+    // 3. Check for overflow from accumulator into integer part
     const carry = Math.floor(fractionalAccumulator);
     integerPart += BigInt(carry);
     const finalFraction = Math.abs(fractionalAccumulator - carry);
 
-    // 4. String-Zusammenbau ohne wissenschaftliche Notation
+    // 4. Assemble string without scientific notation
     const sign = this.s < 0 ? "-" : "";
     const fractionStr = finalFraction.toFixed(decimalPlaces).split(".")[1];
 
@@ -484,67 +514,65 @@ export class DNum {
   }
 
   /**
-   * Versucht die Zahl als volle Ganzzahl auszuschreiben.
-   * ACHTUNG: Bei sehr hohen Dimensionen wird der String gigantisch!
-   */
-  /**
-   * Gibt die Zahl als vollen String aus. 
-   * Beachtet Nachkommastellen im D1 Bereich.
+   * Returns the value as a full string. 
+   * Respects decimal places in the D1 range.
+   * Caution: String can become massive for very high dimensions!
    */
   toFullString(precision: number = 10): string {
     if (this.d === 1) {
-      // Im D1 Bereich nutzen wir die native Präzision
       return this.s.toFixed(precision);
     }
 
     const logV = this.totalLog;
     if (logV < 0) return "0." + "0".repeat(precision);
-    if (logV > 100) return this.toScientific(); // Schutz vor String-Explosion
+    if (logV > 100) return this.toScientific(); // Protection against string explosion
 
-    // Für Werte > D1, aber noch darstellbar
     const val = (this.s >= 0 ? 1 : -1) * Math.pow(10, logV);
     return val.toFixed(precision);
   }
 
   /**
-   * Analysiert den theoretischen Informationsverlust durch die FP-Limitierung.
+   * Analyzes theoretical information loss due to FP limitation.
    */
   getLossAnalysis(): string {
     const logV = this.totalLog;
     const totalDigits = Math.floor(logV) + 1;
-    const precisionDigits = 15; // Standard für IEEE 754 Double
+    const precisionDigits = 15; // Standard for IEEE 754 Double
 
     if (totalDigits <= precisionDigits) {
-      return `Präzision: 100%. Die Zahl passt voll in den 64-Bit Speicher.`;
+      return `Precision: 100%. The value fits fully within 64-bit memory.`;
     }
 
     const lostDigits = totalDigits - precisionDigits;
-    return `Verlust-Analyse: Von ${totalDigits} Stellen sind ${precisionDigits} sicher. ` +
-      `Die hinteren ${lostDigits} Stellen sind "verschwommen" (Nullen/Rundungsrauschen).`;
+    return `Loss Analysis: Out of ${totalDigits} digits, ${precisionDigits} are safe. ` +
+      `The remaining ${lostDigits} digits are "blurry" (zeros/rounding noise).`;
   }
 
+  /**
+   * Detailed audit of precision and Tracer status.
+   */
   getDetailedLossAnalysis(): string {
     const logMain = this.totalLog;
     const mainDigits = Math.floor(logMain) + 1;
 
-    let report = `--- PRÄZISIONS-AUDIT ---\n`;
-    report += `Hauptwert: ${this.toString()} (${mainDigits} Stellen)\n`;
+    let report = `--- PRECISION AUDIT ---\n`;
+    report += `Main Value: ${this.toString()} (${mainDigits} digits)\n`;
 
     const buckets = this.tracers.getBuckets();
     if (buckets.size === 0) {
-      report += `Tracer: Keine aktiven Mikro-Informationen.\n`;
+      report += `Tracer: No active micro-information.\n`;
     } else {
-      report += `Tracer-Status:\n`;
+      report += `Tracer Status:\n`;
       buckets.forEach((val, dim) => {
         if (val !== 0) {
           const logBucket = dim * Math.log10(Math.abs(val));
-          const abstand = logMain - logBucket;
+          const distance = logMain - logBucket;
 
-          report += `  - Dim ${dim}: Wert ${val.toFixed(2)} `;
-          if (abstand > 15) {
-            report += `[SICHER] (Abstand ${abstand.toFixed(1)} Dekaden - Hauptwert "sieht" dies nicht)\n`;
+          report += `  - Dim ${dim}: Value ${val.toFixed(2)} `;
+          if (distance > 15) {
+            report += `[SAFE] (Distance ${distance.toFixed(1)} decades - main value does not "see" this)\n`;
           } else {
-            report += `[RELEVANT] (Wird bald den Hauptwert beeinflussen)\n`;
+            report += `[RELEVANT] (Will soon affect the main value)\n`;
           }
         }
       });
@@ -553,20 +581,18 @@ export class DNum {
     const precisionLimit = 15;
     if (mainDigits > precisionLimit) {
       const lost = mainDigits - precisionLimit;
-      report += `\nFAZIT: Der Hauptwert hat ${lost} Stellen "Rundungsrauschen" am Ende.\n`;
-      report += `ABER: Die Tracer speichern Mikro-Änderungen verlustfrei ab.`;
+      report += `\nCONCLUSION: The main value has ${lost} digits of "rounding noise" at the end.\n`;
+      report += `BUT: The Tracers store micro-changes losslessly.`;
     } else {
-      report += `\nFAZIT: Das System arbeitet aktuell absolut verlustfrei.`;
+      report += `\nCONCLUSION: The system is currently working absolutely losslessly.`;
     }
 
     return report;
   }
 
   /**
-   * Erstellt ein DNum aus einer beliebigen Zahl oder einem E-Notation String.
-   * Beispiel: DNum.fromAny("2.77e+25") oder DNum.fromAny(22000)
+   * Safely creates a DNum from any number or E-notation string.
    */
-  /** Erstellt ein DNum sicher aus jeder Zahl (auch negativ!) */
   static fromAny(input: string | number): DNum {
     let val: number;
     if (typeof input === "string") {
@@ -581,7 +607,7 @@ export class DNum {
     const absVal = Math.abs(val);
     const logV = Math.log10(absVal);
 
-    // Wir bleiben in Dimension 1, solange wir unter 1 Billiarde sind
+    // Stay in Dimension 1 as long as we are under 1 quadrillion
     if (absVal < 1e15) {
       return new DNum(val, 1);
     }
@@ -592,7 +618,7 @@ export class DNum {
   }
 
   /**
-   * EXPORT: Erstellt ein flaches JSON-Objekt inklusive aller Buckets.
+   * Serializes the DNum instance into a JSON string, including Tracer status.
    */
   serialize(): string {
     return JSON.stringify({
@@ -603,7 +629,7 @@ export class DNum {
   }
 
   /**
-   * IMPORT: Rekonstruiert ein DNum-Objekt inklusive Tracer-Status.
+   * Reconstructs a DNum instance from a serialized JSON string.
    */
   static deserialize(json: string): DNum {
     const data = JSON.parse(json);
@@ -617,11 +643,16 @@ export class DNum {
   }
 }
 
+/**
+ * Utility for formatting DNums with human-readable suffixes.
+ */
 class DNumFormatter {
-    // Suffixe für den benannten Bereich
+    // Suffixes for the named range
     private static namedSuffixes = ["", "k", "Mio", "Mrd", "Bio", "Brd", "Trill", "Trard"];
     
-    // Alphabetische Suffixe für den Bereich danach (aa, ab, ac...)
+    /**
+     * Generates alphabetical suffixes for values beyond the named range (aa, ab, ac...).
+     */
     private static getLetterSuffix(logV: number): string {
         const index = Math.floor((logV - 24) / 3);
         if (index < 0) return "";
@@ -631,22 +662,27 @@ class DNumFormatter {
         return firstLetter + secondLetter;
     }
 
+    /**
+     * Formats a DNum into a readable string with appropriate suffixes.
+     * @param num The DNum to format.
+     * @param precision Number of decimal places.
+     */
     public static format(num: DNum, precision: number = 2): string {
         const logV = num.totalLog;
 
-        // 1. Götter-Modus (Dimensionen)
-        // Wenn die Zahl so groß ist, dass Suffixe keinen Sinn mehr ergeben
+        // 1. God Mode (Dimensions)
+        // Used when the number is so large that suffixes lose their meaning.
         if (num.d > 10 || logV > 3000) {
             return `${num.s.toFixed(precision)} [D${num.d}]`;
         }
 
-        // 2. Alphabetischer Modus (aa, ab, ac...)
+        // 2. Alphabetical Mode (aa, ab, ac...)
         if (logV >= 24) {
             const displayS = Math.pow(10, logV % 3);
             return `${displayS.toFixed(precision)} ${this.getLetterSuffix(logV)}`;
         }
 
-        // 3. Benannter Modus
+        // 3. Named Mode
         if (logV >= 3) {
             const suffixIndex = Math.floor(logV / 3);
             const displayS = Math.pow(10, logV % 3);
@@ -654,7 +690,7 @@ class DNumFormatter {
             return `${displayS.toFixed(precision)} ${suffix}`;
         }
 
-        // 4. Menschlicher Modus (mit Tracer-Präzision!)
+        // 4. Human Mode (with Tracer precision!)
         return num.toPreciseString(precision);
     }
 }
